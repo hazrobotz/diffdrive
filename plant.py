@@ -5,18 +5,39 @@ def main(request):
     y = []
     output = dcmotor.main(request["motordata"])
     motoroutput = np.array(output["data"]["y"])
-    translationalvelocity = motoroutput[:,[1,3]].mean(axis=1)
-    angularvelocity = np.diff(motoroutput[:,[1,3]], axis=1)
-    xx=np.array(request["x0"])+ 0.
-    count = motoroutput.shape[0]
+    if hasattr(request, "type") and request.type is "velocity":
+        translationalvelocity = motoroutput[:,[1,3]].mean(axis=1)
+        angularvelocity = np.diff(motoroutput[:,[1,3]], axis=1)
+        xx=np.array(request["x0"])+ 0.
+        count = motoroutput.shape[0]
+        y.append(xx.flatten().round(4).tolist()+[np.round(motoroutput[0, -1], 4)])
+        hh = np.diff(motoroutput[:,-1])
+        for i in range(1, count):
+            xx[0] = xx[0] + request["r"] * translationalvelocity[i] * np.cos(xx[2])*hh[i-1]
+            xx[1] = xx[1] + request["r"] * translationalvelocity[i] * np.sin(xx[2])*hh[i-1]
+            xx[2] = xx[2] + request["r"]/request["b"] * angularvelocity[i]*hh[i-1]
+            y.append(xx.flatten().tolist()+[np.round(motoroutput[i, -1], 4)])
+    else:
+        leftdelta = np.diff(motoroutput[:,0])
+        rightdelta = np.diff(motoroutput[:,2])
+        xx=np.array(request["x0"])+ 0.
+        count = motoroutput.shape[0]
 
-    y.append(xx.flatten().round(4).tolist()+[np.round(motoroutput[0, -1], 4)])
-    hh = np.diff(motoroutput[:,-1])
-    for i in range(1, count):
-        xx[0] = xx[0] + request["r"] * translationalvelocity[i] * np.cos(xx[2])*hh[i-1]
-        xx[1] = xx[1] + request["r"] * translationalvelocity[i] * np.sin(xx[2])*hh[i-1]
-        xx[2] = xx[2] + request["r"]/request["b"] * angularvelocity[i]*hh[i-1]
-        y.append(xx.flatten().tolist()+[np.round(motoroutput[i, -1], 4)])
+        y.append(xx.flatten().round(4).tolist()+[np.round(motoroutput[0, -1], 4)])
+
+        for i in range(1, count-1):
+            if np.fabs(leftdelta[i]-rightdelta[i]) <= .0001:
+                xx[0] = xx[0] + request["r"] * leftdelta[i] * np.cos(xx[2])
+                xx[1] = xx[1] + request["r"] * rightdelta[i] * np.sin(xx[2])
+                xx[2] = xx[2]
+            else:
+                R = request["b"] * (leftdelta[i] + rightdelta[i]) / (2 * (rightdelta[i] - leftdelta[i]))
+                wd = request["r"] * (rightdelta[i] - leftdelta[i])/request["b"] 
+                xx[0] = xx[0] + R * np.sin(wd + xx[2]) - R * np.sin(xx[2])
+                xx[1] = xx[1] - R * np.cos(wd + xx[2]) + R * np.cos(xx[2])
+                xx[2] = xx[2] + wd
+                
+            y.append(xx.flatten().tolist()+[np.round(motoroutput[i, -1], 4)])
 
     return {"data": {"y": y}}
 
