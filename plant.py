@@ -1,3 +1,4 @@
+import numpy as np
 from openloopLTIplant import plant as dcmotor
 
 def main(request):
