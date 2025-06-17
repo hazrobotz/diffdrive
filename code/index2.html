@@ -126,7 +126,7 @@
                 <script>
                         var keyPressed = {};
                         var u = 0;
-                        var umax = .2;
+                        var umax = 1;
 
                         document.addEventListener('keydown', function(e) {
                              keyPressed[e.keyCode] = true;
@@ -138,11 +138,11 @@
                         function initKeyboard(){
                                 intervalId = setInterval(checkKeyboard, 1000/30);
                         }
-                        function sendControl(value)
+                        function sendControl(value1, value2)
                         {
                                 var xmlHttp = null;
                                 xmlHttp = new XMLHttpRequest();
-                                xmlHttp.open( "GET", base_url + "/u?value0="+value+"&value1="+value+"&t="+0, true );
+                                xmlHttp.open( "GET", base_url + "/u?value0="+value1+"&value1="+value2+"&t="+0, true );
                                 xmlHttp.send( null );
                                 return  
                         }
@@ -151,13 +151,29 @@
                                 if (keyPressed["38"])
                                 {
                                         u=umax;
-                                        sendControl(u);
+                                        sendControl(u, u);
                                 }
                                 else if (keyPressed["40"]) 
                                 {
                                         u=-umax;
-                                        sendControl(u);
+                                        sendControl(u, u);
                                 }
+                                else if (keyPressed["37"])
+                                {
+                                        u=-umax;
+                                        sendControl(-u, u);
+                                }
+                                else if (keyPressed["39"])
+                                {
+                                        u=-umax;
+                                        sendControl(u, -u);
+                                }
+                                else if (keyPressed["32"])
+                                {
+                                        u=-umax;
+                                        sendControl(0, 0);
+                                }
+
                                 else
                                 {
                                         u=0;
