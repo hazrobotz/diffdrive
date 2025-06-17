@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diffdrive
+spec:
+  selector:
+    matchLabels:
+      app: diffdrive
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: diffdrive
+    spec:
+      containers:
+        - name: diffdrive
+          image: ghcr.io/hazrobotz/diffdrive:main
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: PORT 
+            value: "8000"
+          - name: NUM_PLANTS 
+            value: "4"
+          - name: SAMPLE_PERIOD 
+            value: ".02"
+          ports:
+            - containerPort: 1234
