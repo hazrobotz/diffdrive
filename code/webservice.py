@@ -69,6 +69,29 @@ def index(idx=0):
     return render_template('index2.html', idx=idx)
 
 
+@api.route('/<int:idx>/3', methods=['GET'])
+@cross_origin(idx=0)
+def index3(idx=0):
+    """
+    Provides access to a view of the system.
+    ---
+    parameters:
+      - name: idx
+        in: path
+        type: string
+        required: true
+        description: The id of the relevant sub-system
+    responses:
+        200:
+            description: Valid response from server (contains payload with actual status).
+        404:
+            description: Not Found.
+        405:
+            description: Method not allowed.
+    """
+    return render_template('index3.html', idx=idx)
+
+
 @api.route('/<int:idx>/init', methods=['GET'])
 @cross_origin()
 def initservice(idx=0):
