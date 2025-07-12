@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Differential Drive Robot 3D Visualization - Live State & Onboard Camera</title>
+    <style>
+        /* CSS reset and basic styles for better consistency */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modern, readable font */
+            background-color: #f0f0f0; /* Light background for the page */
+        }
+
+        canvas {
+            display: block;
+            width: 100vw; /* Ensure canvas fills the viewport */
+            height: 100vh;
+        }
+
+        /* UI Container Styling */
+        #ui-container {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(255, 255, 255, 0.95); /* Slightly less transparent */
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15); /* Subtle shadow for depth */
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 10px; /* Spacing between elements */
+            align-items: flex-start; /* Align items to the start */
+        }
+
+        #ui-container label {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px; /* Space between label and select */
+        }
+
+        #environment-select, #camera-toggle-button {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out; /* Smooth transitions */
+        }
+
+        #environment-select:hover, #camera-toggle-button:hover {
+            border-color: #007bff;
+            box-shadow: 0 2px 5px rgba(0, 123, 255, 0.2);
+        }
+
+        #camera-toggle-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+        }
+
+        #camera-toggle-button:hover {
+            background-color: #0056b3;
+        }
+
+        #status-message {
+            margin-top: 10px; /* More space */
+            font-size: 0.95em;
+            color: #555;
+            font-weight: 600; /* Slightly bolder */
+            padding: 5px; /* Add some padding */
+            border-radius: 4px;
+            background-color: #f8f9fa; /* Light background for status */
+            border: 1px solid #e9ecef; /* Light border */
+        }
+
+        /* Joystick Container Styling */
+        #joystick-container {
+            position: fixed;
+            bottom: 25px; /* Slightly higher from bottom */
+            left: 25px; /* Slightly further from left */
+            width: 160px; /* Slightly larger */
+            height: 160px; /* Slightly larger */
+            z-index: 101;
+            background: rgba(0, 0, 0, 0.1); /* Darker, more subtle background */
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.25); /* More prominent shadow */
+        }
+
+        /* Nipple.js specific override for joystick nipple */
+        #joystick-container .nipple {
+            background-color: rgba(60, 60, 60, 0.7) !important; /* Darker, more solid nipple */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); /* Nipple shadow */
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <label for="environment-select">Choose Environment:</label>
+        <select id="environment-select">
+            <option value="env1">Square Arena</option>
+            <option value="env2">L-Shape Path</option>
+            <option value="env3">Narrow Corridor</option>
+        </select>
+        <div id="status-message">Initializing...</div>
+        <button id="camera-toggle-button">Toggle Camera</button>
+    </div>
+    <div id="joystick-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- CONSTANTS AND CONFIGURATION ---
+        // Using `const` for values that don't change.
+        const ROBOT_WHEEL_RADIUS = 0.075;
+        const ROBOT_HALF_WHEEL_BASE = 0.3 / 2; // Half distance between wheels
+
+        const WALL_THICKNESS = 0.1;
+        const WALL_HEIGHT = 0.5;
+        const LINE_HEIGHT = 0.01;
+        const LINE_WIDTH = 0.1;
+
+        const JOYSTICK_MAX_VELOCITY = 3.0; // Positive value, velocity will be scaled by direction
+        const ROBOT_MAX_KEYBOARD_VELOCITY = 2.0; // Max speed for keyboard control
+
+        const ROBOT_STATE_FETCH_INTERVAL = 100; // ms
+        const KEYBOARD_CHECK_INTERVAL = 1000 / 30; // ms (approx 30 FPS)
+
+        // Base URL for state fetching (assuming your server runs where this HTML is served)
+        const BASE_URL = window.location.href.substring(0, window.location.href.lastIndexOf("/"));
+
+        // --- SCENE & ROBOT ELEMENTS ---
+        let scene, mainCamera, onboardCamera, activeCamera, renderer;
+        let robotGroup; // Group containing all robot meshes
+        let environmentSceneGroup; // Group for all environment meshes
+
+        // --- ROBOT STATE & CONTROL ---
+        let joystickLinear = 0; // Linear velocity (forward/backward)
+        let joystickAngular = 0; // Angular velocity (left/right)
+        let robotActualState = { x: 0, y: 0, theta: 0 }; // Actual robot pose from server
+        let statusMessageElement; // DOM element for status updates
+
+        // Keyboard state tracking
+        const keyPressed = {}; // Use an object for cleaner key tracking
+
+        // --- ENVIRONMENT CONFIGURATION ---
+        const environmentsConfig = {
+            "env1": {
+                "name": "Square Arena",
+                "main_camera": { "x": 0, "y": -6, "z": 6, "lookAt": [0, 0, 0] },
+                "arena": { "width": 8, "depth": 8, "groundColor": 0x90EE90, "wallColor": 0x8B4513 },
+                "start_pose": { "x": -2, "y": -2, "theta": 0 },
+                "lines": [
+                    { "x": -2, "y": -2, "length": 4, "rotation": 0 },
+                    { "x": 2, "y": 0, "length": 4, "rotation": Math.PI / 2 },
+                    { "x": 0, "y": 2, "length": 4, "rotation": Math.PI },
+                    { "x": -2, "y": 0, "length": 4, "rotation": -Math.PI / 2 }
+                ],
+                "obstacles": [
+                    { "type": "box", "dimensions": [0.5, 0.5, 0.5], "material": { "color": 0xff0000 }, "position": [2, 0, 0.25], "rotation": [0, 0, 0] },
+                    { "type": "cylinder", "dimensions": [0.3, 0.3, 0.7, 32], "material": { "color": 0xff0000 }, "position": [-2, 2, 0.35], "rotation": [0, 0, 0] }
+                ]
+            },
+            "env2": {
+                "name": "L-Shape Path",
+                "main_camera": { "x": 0, "y": -6, "z": 6, "lookAt": [0, 0, 0] },
+                "arena": { "width": 8, "depth": 8, "groundColor": 0xCCFFCC, "wallColor": 0x6B8E23 },
+                "start_pose": { "x": -3, "y": -3, "theta": 0 },
+                "lines": [
+                    { "x": -1, "y": -3, "length": 4, "rotation": 0 },
+                    { "x": 1, "y": -1, "length": 4, "rotation": Math.PI / 2 }
+                ],
+                "obstacles": [
+                    { "type": "cylinder", "dimensions": [0.4, 0.4, 0.8, 32], "material": { "color": 0x0000ff }, "position": [0, -2, 0.4], "rotation": [0, 0, 0] },
+                    { "type": "box", "dimensions": [0.6, 0.6, 0.6], "material": { "color": 0x0000ff }, "position": [2, 1, 0.3], "rotation": [0, 0, 0] }
+                ]
+            },
+            "env3": {
+                "name": "Narrow Corridor",
+                "main_camera": { "x": 0, "y": -6, "z": 6, "lookAt": [0, 0, 0] },
+                "arena": { "width": 6, "depth": 10, "groundColor": 0xFFFFFF, "wallColor": 0x444444 },
+                "start_pose": { "x": 0, "y": -4, "theta": Math.PI / 2 },
+                "lines": [
+                    { "x": 0, "y": 0, "length": 8, "rotation": Math.PI / 2 }
+                ],
+                "obstacles": [
+                    { "type": "box", "dimensions": [0.4, 0.4, 0.5], "material": { "color": 0x880088 }, "position": [0.8, -1.5, 0.25], "rotation": [0, 0, 0] },
+                    { "type": "box", "dimensions": [0.4, 0.4, 0.5], "material": { "color": 0x880088 }, "position": [-0.8, 1.5, 0.25], "rotation": [0, 0, 0] }
+                ]
+            }
+        };
+
+        // --- INITIALIZATION ---
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xcccccc); // Light grey background
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio); // For sharper rendering on high-DPI screens
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Cameras
+            mainCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // Position set in loadEnvironment
+
+            onboardCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
+            onboardCamera.position.set(0.15, 0, 0.15); // Relative to robot's center
+            onboardCamera.up.set(0, 0, 1); // World Z is up
+            onboardCamera.lookAt(new THREE.Vector3(onboardCamera.position.x + 1, onboardCamera.position.y, onboardCamera.position.z));
+
+            activeCamera = mainCamera; // Default camera
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 1.5); // Slightly stronger ambient
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Brighter directional
+            directionalLight.position.set(5, 5, 5).normalize(); // Changed position for better highlights
+            scene.add(directionalLight);
+
+            // Robot Model Creation
+            createRobotModel();
+
+            // UI Elements
+            statusMessageElement = document.getElementById('status-message');
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+
+            document.getElementById('environment-select').addEventListener('change', (event) => {
+                const selectedEnvKey = event.target.value;
+                loadEnvironment(environmentsConfig[selectedEnvKey]);
+            });
+
+            document.getElementById('camera-toggle-button').addEventListener('click', () => {
+                activeCamera = (activeCamera === mainCamera) ? onboardCamera : mainCamera;
+                onWindowResize(); // Adjust aspect ratio for the new camera
+            });
+
+            // Initialize Joystick
+            initJoystick();
+
+            // Keyboard Controls
+            document.addEventListener('keydown', (e) => { keyPressed[e.code] = true; }); // Use e.code for clarity (e.g., 'ArrowUp')
+            document.addEventListener('keyup', (e) => { keyPressed[e.code] = false; });
+
+            // Load default environment and start loops
+            loadEnvironment(environmentsConfig.env1);
+            setInterval(fetchRobotState, ROBOT_STATE_FETCH_INTERVAL);
+            setInterval(checkKeyboard, KEYBOARD_CHECK_INTERVAL);
+            animate(); // Start rendering loop
+        }
+
+        // --- ROBOT MODEL CREATION ---
+        function createRobotModel() {
+            robotGroup = new THREE.Group();
+            scene.add(robotGroup);
+
+            // Robot Body
+            const bodyGeometry = new THREE.BoxGeometry(0.4, 0.6, 0.1); // width, depth, height
+            const bodyMaterial = new THREE.MeshPhongMaterial({ color: 0x0077ff, flatShading: true }); // flatShading for more stylized look
+            const robotBody = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            robotGroup.add(robotBody);
+
+            // Wheels
+            const wheelGeometry = new THREE.CylinderGeometry(ROBOT_WHEEL_RADIUS, ROBOT_WHEEL_RADIUS, 0.05, 32);
+            const wheelMaterial = new THREE.MeshPhongMaterial({ color: 0x333333, flatShading: true });
+
+            const rightWheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+            rightWheel.rotation.z = Math.PI / 2; // Orient cylinder correctly
+            rightWheel.position.set(0, -ROBOT_HALF_WHEEL_BASE, -ROBOT_WHEEL_RADIUS); // Position relative to body center
+            robotBody.add(rightWheel);
+
+            const leftWheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+            leftWheel.rotation.z = Math.PI / 2;
+            leftWheel.position.set(0, ROBOT_HALF_WHEEL_BASE, -ROBOT_WHEEL_RADIUS);
+            robotBody.add(leftWheel);
+
+            // Front Indicator (Cone)
+            const indicatorGeometry = new THREE.ConeGeometry(0.05, 0.2, 8);
+            const indicatorMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
+            indicator.rotation.x = Math.PI / 2; // Point forward
+            indicator.position.set(bodyGeometry.parameters.depth / 2 + 0.05, 0, 0.0); // Slightly forward from body, aligned Z
+            robotBody.add(indicator);
+
+            // Attach onboard camera to the robot body, not the robotGroup directly.
+            // This is because robotBody is the mesh that visually represents the robot's dimensions
+            // and the camera's position is relative to that visual representation.
+            robotBody.add(onboardCamera);
+        }
+
+        // --- ENVIRONMENT LOADING ---
+        function loadEnvironment(envConfig) {
+            // Dispose of previous environment's geometries and materials
+            if (environmentSceneGroup) {
+                disposeThreeJsGroup(environmentSceneGroup);
+                scene.remove(environmentSceneGroup);
+            }
+
+            environmentSceneGroup = new THREE.Group();
+            scene.add(environmentSceneGroup);
+
+            // Update Main Camera Position
+            mainCamera.position.set(envConfig.main_camera.x, envConfig.main_camera.y, envConfig.main_camera.z);
+            mainCamera.lookAt(...envConfig.main_camera.lookAt);
+
+            // Ground Plane
+            const groundGeometry = new THREE.PlaneGeometry(envConfig.arena.width, envConfig.arena.depth);
+            const groundMaterial = new THREE.MeshPhongMaterial({ color: envConfig.arena.groundColor, side: THREE.DoubleSide });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            //ground.rotation.x = Math.PI / 2; // Rotate to be on X-Y plane (Three.js PlaneGeometry is XY by default)
+            ground.position.z = -0.005; // Slightly below Z=0 to avoid z-fighting
+            environmentSceneGroup.add(ground);
+
+            // Arena Walls
+            const wallMaterial = new THREE.MeshPhongMaterial({ color: envConfig.arena.wallColor });
+            const arenaWidth = envConfig.arena.width;
+            const arenaDepth = envConfig.arena.depth;
+
+            // Using consistent wall positioning
+            // Wall along positive Y axis (top)
+            const wall1 = new THREE.Mesh(new THREE.BoxGeometry(arenaWidth, WALL_THICKNESS, WALL_HEIGHT), wallMaterial);
+            wall1.position.set(0, arenaDepth / 2 - WALL_THICKNESS / 2, WALL_HEIGHT / 2);
+            environmentSceneGroup.add(wall1);
+
+            // Wall along negative Y axis (bottom)
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(arenaWidth, WALL_THICKNESS, WALL_HEIGHT), wallMaterial);
+            wall2.position.set(0, -arenaDepth / 2 + WALL_THICKNESS / 2, WALL_HEIGHT / 2);
+            environmentSceneGroup.add(wall2);
+
+            // Wall along positive X axis (right)
+            const wall3 = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICKNESS, arenaDepth - WALL_THICKNESS, WALL_HEIGHT), wallMaterial); // Adjust length for corners
+            wall3.position.set(arenaWidth / 2 - WALL_THICKNESS / 2, 0, WALL_HEIGHT / 2);
+            environmentSceneGroup.add(wall3);
+
+            // Wall along negative X axis (left)
+            const wall4 = new THREE.Mesh(new THREE.BoxGeometry(WALL_THICKNESS, arenaDepth - WALL_THICKNESS, WALL_HEIGHT), wallMaterial); // Adjust length for corners
+            wall4.position.set(-arenaWidth / 2 + WALL_THICKNESS / 2, 0, WALL_HEIGHT / 2);
+            environmentSceneGroup.add(wall4);
+
+
+            // Line Path
+            const lineMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            envConfig.lines.forEach(segment => {
+                const lineSegment = new THREE.Mesh(new THREE.BoxGeometry(segment.length, LINE_WIDTH, LINE_HEIGHT), lineMaterial);
+                lineSegment.position.set(segment.x, segment.y, LINE_HEIGHT / 2);
+                lineSegment.rotation.z = segment.rotation;
+                environmentSceneGroup.add(lineSegment);
+            });
+
+            // Obstacles
+            envConfig.obstacles.forEach(obstacle => {
+                let geometry;
+                if (obstacle.type === "box") {
+                    geometry = new THREE.BoxGeometry(...obstacle.dimensions);
+                } else if (obstacle.type === "cylinder") {
+                    // CylinderGeometry parameters: radiusTop, radiusBottom, height, radialSegments
+                    geometry = new THREE.CylinderGeometry(obstacle.dimensions[0], obstacle.dimensions[1], obstacle.dimensions[2], obstacle.dimensions[3]);
+                } else {
+                    console.warn("Unknown obstacle type:", obstacle.type);
+                    return;
+                }
+                const material = new THREE.MeshPhongMaterial({ color: obstacle.material.color, flatShading: true });
+                const obstacleMesh = new THREE.Mesh(geometry, material);
+                obstacleMesh.position.set(...obstacle.position);
+                obstacleMesh.rotation.set(...obstacle.rotation);
+                environmentSceneGroup.add(obstacleMesh);
+            });
+
+            // Reset robot position to environment's start_pose
+            robotActualState.x = envConfig.start_pose.x;
+            robotActualState.y = envConfig.start_pose.y;
+            robotActualState.theta = envConfig.start_pose.theta;
+
+            // Immediately update robot's visual position
+            robotGroup.position.set(robotActualState.x, robotActualState.y, 0);
+            robotGroup.rotation.z = robotActualState.theta;
+        }
+
+        // Helper to dispose Three.js objects
+        function disposeThreeJsGroup(group) {
+            group.traverse((object) => {
+                if (object.isMesh) {
+                    if (object.geometry) {
+                        object.geometry.dispose();
+                    }
+                    if (object.material) {
+                        if (Array.isArray(object.material)) {
+                            object.material.forEach(material => material.dispose());
+                        } else {
+                            object.material.dispose();
+                        }
+                    }
+                }
+            });
+        }
+
+
+        // --- EVENT HANDLERS ---
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            mainCamera.aspect = width / height;
+            mainCamera.updateProjectionMatrix();
+
+            onboardCamera.aspect = width / height;
+            onboardCamera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+        }
+
+        // --- ROBOT STATE & CONTROL ---
+        async function fetchRobotState() {
+            try {
+                // Add a cache-busting timestamp
+                const url = `${BASE_URL}/state?t=${new Date().getTime()}`;
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const dataText = await response.text();
+                // Ensure data is parsed correctly, trim whitespace
+                const data = dataText.trim().split(" ").map(parseFloat);
+
+                if (data.length >= 3 && !isNaN(data[0]) && !isNaN(data[1]) && !isNaN(data[2])) {
+                    robotActualState.x = data[0];
+                    robotActualState.y = data[1];
+                    robotActualState.theta = data[2];
+                    statusMessageElement.textContent = "Robot state: Connected ✅";
+                    statusMessageElement.style.color = "green";
+                } else {
+                    console.warn("Received malformed data:", dataText);
+                    statusMessageElement.textContent = "Robot state: Malformed data ⚠️";
+                    statusMessageElement.style.color = "orange";
+                }
+            } catch (error) {
+                console.error("Failed to fetch robot state:", error);
+                statusMessageElement.textContent = `Robot state: Disconnected ❌ (${error.message})`;
+                statusMessageElement.style.color = "red";
+            }
+        }
+
+        function sendControl(value1, value2) {
+            const url = `${BASE_URL}/u?value0=${value1.toFixed(3)}&value1=${value2.toFixed(3)}&t=${new Date().getTime()}`;
+            // Using Fetch API for modern async operations
+            fetch(url).catch(error => {
+                console.error("Failed to send control command:", error);
+                // Optionally update UI for control send errors
+            });
+        }
+
+        // --- JOYSTICK CONTROL ---
+        function initJoystick() {
+            const joystickManager = window.nipplejs.create({
+                zone: document.getElementById('joystick-container'),
+                mode: 'static',
+                position: { left: '50%', top: '50%' },
+                color: 'white',
+                restJoystick: true
+            });
+
+            joystickManager.on('move', function (evt, data) {
+                if (data.vector && data.force) {
+                    // Force is a normalized value from 0 to 1
+                    // data.vector.y is -1 (forward) to 1 (backward)
+                    // data.vector.x is -1 (left) to 1 (right)
+
+                    // Invert y for joystick as typically pushing up is positive linear velocity
+                    joystickLinear = data.vector.y * data.force * JOYSTICK_MAX_VELOCITY;
+                    joystickAngular = -data.vector.x * data.force * JOYSTICK_MAX_VELOCITY;
+
+                    applyDifferentialDriveControl(joystickLinear, joystickAngular);
+                }
+            }).on('end', function (evt) {
+                joystickLinear = 0;
+                joystickAngular = 0;
+                sendControl(0, 0); // Stop robot when joystick released
+            });
+        }
+
+        // --- KEYBOARD CONTROL ---
+        function checkKeyboard() {
+            let currentLinear = 0;
+            let currentAngular = 0;
+
+            // Prioritize joystick if it's active
+            if (joystickLinear !== 0 || joystickAngular !== 0) {
+                return; // Joystick is controlling, ignore keyboard
+            }
+
+            if (keyPressed["ArrowUp"]) {
+                currentLinear = ROBOT_MAX_KEYBOARD_VELOCITY;
+            } else if (keyPressed["ArrowDown"]) {
+                currentLinear = -ROBOT_MAX_KEYBOARD_VELOCITY;
+            }
+
+            if (keyPressed["ArrowLeft"]) {
+                currentAngular = ROBOT_MAX_KEYBOARD_VELOCITY;
+            } else if (keyPressed["ArrowRight"]) {
+                currentAngular = -ROBOT_MAX_KEYBOARD_VELOCITY;
+            }
+
+            // If spacebar is pressed, stop
+            if (keyPressed["Space"]) {
+                currentLinear = 0;
+                currentAngular = 0;
+            }
+
+            applyDifferentialDriveControl(currentLinear, currentAngular);
+        }
+
+        // --- DIFFERENTIAL DRIVE LOGIC ---
+        function applyDifferentialDriveControl(linearVelocity, angularVelocity) {
+            // Calculate wheel velocities for differential drive
+            const v_left_wheel = linearVelocity - (angularVelocity * ROBOT_HALF_WHEEL_BASE);
+            const v_right_wheel = linearVelocity + (angularVelocity * ROBOT_HALF_WHEEL_BASE);
+
+            sendControl(v_left_wheel, v_right_wheel);
+        }
+
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Update robot's visual position and orientation
+            robotGroup.position.set(robotActualState.x, robotActualState.y, 0);
+            robotGroup.rotation.z = robotActualState.theta; // Theta is rotation around Z
+
+            renderer.render(scene, activeCamera);
+        }
+
+        // --- START THE APPLICATION ---
+        document.addEventListener('DOMContentLoaded', init); // Ensure DOM is loaded before init
+    </script>
+</body>
+</html>
