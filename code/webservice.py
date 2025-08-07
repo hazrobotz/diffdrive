@@ -15,6 +15,9 @@ SWAGGER_UI_CONFIG = {
 }
 
 
+object_detection_data = {}
+
+
 @swaggerapi.route('/')
 def swagger_ui_index():
     return render_template('index.j2', **SWAGGER_UI_CONFIG)
@@ -150,6 +153,117 @@ def getstate(idx=None):
     """
     f = state(idx)
     return f
+
+
+@api.route('/<int:idx>/object-detection', methods=['POST'])
+@cross_origin()
+def receive_object_data(idx):
+    """
+    Receives object detection results for a specific subsystem.
+    ---
+    parameters:
+      - name: idx
+        in: path
+        type: integer
+        required: true
+        description: The ID of the relevant sub-system.
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              description: The time the detection was made.
+            detections:
+              type: array
+              description: A list of detected objects.
+              items:
+                type: object
+                properties:
+                  class:
+                    type: string
+                    description: The name of the detected object.
+                  score:
+                    type: number
+                    format: float
+                    description: The confidence score of the detection.
+                  bbox:
+                    type: array
+                    items:
+                      type: number
+                      format: float
+                    description: The bounding box [x, y, width, height] of the object.
+    responses:
+      200:
+        description: Object data received successfully.
+      400:
+        description: Invalid request body.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+
+        # Store the data using the subsystem index (idx) as the key.
+        object_detection_data[idx] = data
+
+        return jsonify({"message": f"Data for subsystem {idx} received successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@api.route('/<int:idx>/object-detection', methods=['GET'])
+@cross_origin()
+def get_object_data(idx):
+    """
+    Exposes the most recent object detection results for a specific subsystem.
+    ---
+    parameters:
+      - name: idx
+        in: path
+        type: integer
+        required: true
+        description: The ID of the relevant sub-system.
+    responses:
+      200:
+        description: Returns the latest object detection data.
+        schema:
+          type: object
+          properties:
+            timestamp:
+              type: string
+              description: The time the detection was made.
+            detections:
+              type: array
+              description: A list of detected objects.
+              items:
+                type: object
+                properties:
+                  class:
+                    type: string
+                    description: The name of the detected object.
+                  score:
+                    type: number
+                    format: float
+                    description: The confidence score of the detection.
+                  bbox:
+                    type: array
+                    items:
+                      type: number
+                      format: float
+                    description: The bounding box [x, y, width, height] of the object.
+      404:
+        description: No object data available for this subsystem.
+    """
+    # Retrieve data using the subsystem index (idx).
+    data = object_detection_data.get(idx)
+    
+    if data:
+        return jsonify(data), 200
+    else:
+        return jsonify({"message": f"No object data available for subsystem {idx}"}), 404
 
 
 @api.route('/<int:idx>/u', methods=['GET'])
