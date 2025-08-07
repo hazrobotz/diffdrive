@@ -88,6 +88,17 @@
             border: 1px solid #e9ecef; /* Light border */
         }
 
+        #detection-status-message {
+            margin-top: 0px; /* More space */
+            font-size: 0.95em;
+            color: #555;
+            font-weight: 600; /* Slightly bolder */
+            padding: 0px; /* Add some padding */
+            border-radius: 0px;
+            background-color: #f8f9fa; /* Light background for status */
+            border: 1px solid #e9ecef; /* Light border */
+        }
+
         /* Joystick Container Styling */
         #joystick-container {
             position: fixed;
@@ -120,6 +131,7 @@
             <option value="env3">Narrow Corridor</option>
         </select>
         <div id="status-message">Initializing...</div>
+	<div id="detection-status-message"></div>
         <button id="camera-toggle-button">Toggle Camera</button>
         <button id="detection-toggle-button">Start Detection</button>
     </div>
@@ -172,6 +184,7 @@
         let detectionEnabled = false; // Flag to toggle detection on/off
         let lastDetectionTime = 0; // Timestamp of the last detection
         let detectionButton; // DOM element for the detection toggle button
+        let statusMessageElementDetection;
 
         // Keyboard state tracking
         const keyPressed = {}; // Use an object for cleaner key tracking
@@ -265,7 +278,8 @@
             createRobotModel();
 
             // UI Elements
-            statusMessageElement = document.getElementById('status-message');
+	    statusMessageElement = document.getElementById('status-message');
+            statusMessageElementDetection = document.getElementById('detection-status-message');
             detectionButton = document.getElementById('detection-toggle-button');
 
             // Event Listeners
@@ -287,9 +301,9 @@
                 detectionButton.classList.toggle('active', detectionEnabled);
                 
                 if (detectionEnabled) {
-                    statusMessageElement.textContent = 'Object Detection: Starting...';
+                    statusMessageElementDetection.textContent = 'Object Detection: Starting...';
                 } else {
-                    statusMessageElement.textContent = 'Object Detection: Inactive';
+                    statusMessageElementDetection.textContent = 'Object Detection: Inactive';
                 }
             });
 
@@ -306,13 +320,13 @@
             setInterval(checkKeyboard, KEYBOARD_CHECK_INTERVAL);
             
             // Load the COCO-SSD model once
-            statusMessageElement.textContent = 'Loading detection model...';
+            statusMessageElementDetection.textContent = 'Loading detection model...';
             try {
                 cocoSsdModel = await cocoSsd.load();
-                statusMessageElement.textContent = 'Model loaded successfully! ✅';
+                statusMessageElementDetection.textContent = 'Model loaded! ✅';
                 console.log('TensorFlow model loaded.');
             } catch (error) {
-                statusMessageElement.textContent = 'Failed to load model. ❌';
+                statusMessageElementDetection.textContent = 'Failed to load model. ❌';
                 console.error('Failed to load TensorFlow model:', error);
             }
             
@@ -637,7 +651,7 @@
 	            sendDetectionResults(predictions);
 	        }
 
-	        statusMessageElement.textContent = `Objects detected: ${predictions.length}`;
+	        statusMessageElementDetection.textContent = `Objects detected: ${predictions.length}`;
 	    } catch (error) {
 	        console.error('Detection failed:', error);
 	        statusMessageElement.textContent = 'Object Detection: Error! ❌' + error;
