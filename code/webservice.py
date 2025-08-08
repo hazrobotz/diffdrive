@@ -16,6 +16,7 @@ SWAGGER_UI_CONFIG = {
 
 
 object_detection_data = {}
+LEADER_ROBOT_IDX = 0
 
 
 @swaggerapi.route('/')
@@ -154,6 +155,30 @@ def getstate(idx=None):
     f = state(idx)
     return f
 
+
+@api.route('/<int:idx>/target', methods=['GET'])
+@cross_origin()
+def get_target_state(idx):
+    """
+    Returns the state of the designated target object.
+    ---
+    parameters:
+      - name: idx
+        in: path
+        type: string
+        required: true
+        description: The id of the relevant sub-system
+    responses:
+        200:
+            description: Returns the latest state data of the target object.
+        404:
+            description: Target robot state not found.
+        405:
+            description: Method not allowed.
+    """
+    # Use your existing `state` function to retrieve the data for the leader.
+    f = state(LEADER_ROBOT_IDX)
+    return f
 
 @api.route('/<int:idx>/object-detection', methods=['POST'])
 @cross_origin()
