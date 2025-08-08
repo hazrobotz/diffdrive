@@ -44,7 +44,7 @@
             margin-bottom: 5px; /* Space between label and select */
         }
 
-        #environment-select, #camera-toggle-button {
+        #environment-select, #camera-toggle-button, #detection-toggle-button {
             padding: 8px 12px;
             border: 1px solid #ccc;
             border-radius: 4px;
@@ -53,7 +53,7 @@
             transition: all 0.2s ease-in-out; /* Smooth transitions */
         }
 
-        #environment-select:hover, #camera-toggle-button:hover {
+        #environment-select:hover, #camera-toggle-button:hover, #detection-toggle-button:hover {
             border-color: #007bff;
             box-shadow: 0 2px 5px rgba(0, 123, 255, 0.2);
         }
@@ -67,6 +67,15 @@
         #camera-toggle-button:hover {
             background-color: #0056b3;
         }
+        
+        #detection-toggle-button.active {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        #detection-toggle-button:hover {
+            background-color: #218838;
+        }
 
         #status-message {
             margin-top: 10px; /* More space */
@@ -75,6 +84,17 @@
             font-weight: 600; /* Slightly bolder */
             padding: 5px; /* Add some padding */
             border-radius: 4px;
+            background-color: #f8f9fa; /* Light background for status */
+            border: 1px solid #e9ecef; /* Light border */
+        }
+
+        #detection-status-message {
+            margin-top: 0px; /* More space */
+            font-size: 0.95em;
+            color: #555;
+            font-weight: 600; /* Slightly bolder */
+            padding: 0px; /* Add some padding */
+            border-radius: 0px;
             background-color: #f8f9fa; /* Light background for status */
             border: 1px solid #e9ecef; /* Light border */
         }
@@ -111,15 +131,19 @@
             <option value="env3">Narrow Corridor</option>
         </select>
         <div id="status-message">Initializing...</div>
+	<div id="detection-status-message"></div>
         <button id="camera-toggle-button">Toggle Camera</button>
+        <button id="detection-toggle-button">Start Detection</button>
     </div>
     <div id="joystick-container"></div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"> </script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"> </script>
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
     <script>
         // --- CONSTANTS AND CONFIGURATION ---
-        // Using `const` for values that don't change.
         const ROBOT_WHEEL_RADIUS = 0.075;
         const ROBOT_HALF_WHEEL_BASE = 0.3 / 2; // Half distance between wheels
 
@@ -133,20 +157,34 @@
 
         const ROBOT_STATE_FETCH_INTERVAL = 100; // ms
         const KEYBOARD_CHECK_INTERVAL = 1000 / 30; // ms (approx 30 FPS)
+        const DETECTION_INTERVAL = 1000; // ms (e.g., detect every 1 second)
 
-        // Base URL for state fetching (assuming your server runs where this HTML is served)
+        // Base URL for state fetching and detection endpoint
         const BASE_URL = window.location.href.substring(0, window.location.href.lastIndexOf("/"));
+        const DETECTION_ENDPOINT = `${BASE_URL}/object-detection`;
+        
+        // Size for the offscreen render target (can be adjusted for performance/quality)
+        const DETECTOR_RENDER_WIDTH = 640;
+        const DETECTOR_RENDER_HEIGHT = 480;
 
         // --- SCENE & ROBOT ELEMENTS ---
         let scene, mainCamera, onboardCamera, activeCamera, renderer;
         let robotGroup; // Group containing all robot meshes
         let environmentSceneGroup; // Group for all environment meshes
+        let renderTarget; // The render target for the onboard camera view
 
         // --- ROBOT STATE & CONTROL ---
         let joystickLinear = 0; // Linear velocity (forward/backward)
         let joystickAngular = 0; // Angular velocity (left/right)
         let robotActualState = { x: 0, y: 0, theta: 0 }; // Actual robot pose from server
         let statusMessageElement; // DOM element for status updates
+
+        // --- DETECTION ---
+        let cocoSsdModel = null; // To store the loaded model
+        let detectionEnabled = false; // Flag to toggle detection on/off
+        let lastDetectionTime = 0; // Timestamp of the last detection
+        let detectionButton; // DOM element for the detection toggle button
+        let statusMessageElementDetection;
 
         // Keyboard state tracking
         const keyPressed = {}; // Use an object for cleaner key tracking
@@ -199,7 +237,7 @@
         };
 
         // --- INITIALIZATION ---
-        function init() {
+        async function init() {
             // Scene
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xcccccc); // Light grey background
@@ -209,12 +247,20 @@
             renderer.setPixelRatio(window.devicePixelRatio); // For sharper rendering on high-DPI screens
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
+            
+            // Create a WebGLRenderTarget for the onboard camera's view
+            renderTarget = new THREE.WebGLRenderTarget(DETECTOR_RENDER_WIDTH, DETECTOR_RENDER_HEIGHT, {
+                minFilter: THREE.LinearFilter,
+                magFilter: THREE.LinearFilter,
+                format: THREE.RGBAFormat,
+                encoding: renderer.outputEncoding // Match the renderer's output encoding
+            });
 
             // Cameras
             mainCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             // Position set in loadEnvironment
 
-            onboardCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
+            onboardCamera = new THREE.PerspectiveCamera(70, DETECTOR_RENDER_WIDTH / DETECTOR_RENDER_HEIGHT, 0.01, 10);
             onboardCamera.position.set(0.15, 0, 0.15); // Relative to robot's center
             onboardCamera.up.set(0, 0, 1); // World Z is up
             onboardCamera.lookAt(new THREE.Vector3(onboardCamera.position.x + 1, onboardCamera.position.y, onboardCamera.position.z));
@@ -232,7 +278,9 @@
             createRobotModel();
 
             // UI Elements
-            statusMessageElement = document.getElementById('status-message');
+	    statusMessageElement = document.getElementById('status-message');
+            statusMessageElementDetection = document.getElementById('detection-status-message');
+            detectionButton = document.getElementById('detection-toggle-button');
 
             // Event Listeners
             window.addEventListener('resize', onWindowResize);
@@ -246,6 +294,18 @@
                 activeCamera = (activeCamera === mainCamera) ? onboardCamera : mainCamera;
                 onWindowResize(); // Adjust aspect ratio for the new camera
             });
+            
+            detectionButton.addEventListener('click', () => {
+                detectionEnabled = !detectionEnabled;
+                detectionButton.textContent = detectionEnabled ? 'Stop Detection' : 'Start Detection';
+                detectionButton.classList.toggle('active', detectionEnabled);
+                
+                if (detectionEnabled) {
+                    statusMessageElementDetection.textContent = 'Object Detection: Starting...';
+                } else {
+                    statusMessageElementDetection.textContent = 'Object Detection: Inactive';
+                }
+            });
 
             // Initialize Joystick
             initJoystick();
@@ -258,6 +318,18 @@
             loadEnvironment(environmentsConfig.env1);
             setInterval(fetchRobotState, ROBOT_STATE_FETCH_INTERVAL);
             setInterval(checkKeyboard, KEYBOARD_CHECK_INTERVAL);
+            
+            // Load the COCO-SSD model once
+            statusMessageElementDetection.textContent = 'Loading detection model...';
+            try {
+                cocoSsdModel = await cocoSsd.load();
+                statusMessageElementDetection.textContent = 'Model loaded! ✅';
+                console.log('TensorFlow model loaded.');
+            } catch (error) {
+                statusMessageElementDetection.textContent = 'Failed to load model. ❌';
+                console.error('Failed to load TensorFlow model:', error);
+            }
+            
             animate(); // Start rendering loop
         }
 
@@ -295,8 +367,6 @@
             robotBody.add(indicator);
 
             // Attach onboard camera to the robot body, not the robotGroup directly.
-            // This is because robotBody is the mesh that visually represents the robot's dimensions
-            // and the camera's position is relative to that visual representation.
             robotBody.add(onboardCamera);
         }
 
@@ -531,7 +601,83 @@
 
             sendControl(v_left_wheel, v_right_wheel);
         }
+        
+        // --- TENSORFLOW.JS DETECTION LOGIC ---
+	async function detectObjects() {
+	    if (!detectionEnabled || !cocoSsdModel) {
+	        return;
+	    }
+	
+	    const currentTime = performance.now();
+	    if (currentTime - lastDetectionTime < DETECTION_INTERVAL) {
+	        return;
+	    }
 
+	    lastDetectionTime = currentTime;
+
+	    try {
+	        // 1. Render the scene from the onboard camera's perspective to the renderTarget
+	        renderer.setRenderTarget(renderTarget);
+	        renderer.render(scene, onboardCamera);
+	        renderer.setRenderTarget(null);
+	
+	        // --- NEW CODE START ---
+	        // 2. Create a temporary canvas to get the pixels
+	        const tempCanvas = document.createElement('canvas');
+	        tempCanvas.width = renderTarget.width;
+	        tempCanvas.height = renderTarget.height;
+	        const context = tempCanvas.getContext('2d');
+	        
+	        // Read the pixels from the renderTarget and draw them to the canvas
+	        // This is the crucial step to get a valid image source for TensorFlow.js
+	        const pixels = new Uint8Array(renderTarget.width * renderTarget.height * 4);
+	        renderer.readRenderTargetPixels(renderTarget, 0, 0, renderTarget.width, renderTarget.height, pixels);
+	
+	        const imageData = new ImageData(new Uint8ClampedArray(pixels), renderTarget.width, renderTarget.height);
+	        context.putImageData(imageData, 0, 0);
+        
+	        // 3. Create a TensorFlow.js tensor from the canvas
+	        const imageTensor = tf.browser.fromPixels(tempCanvas);
+
+	        // 4. Run the model on the image tensor
+	        const predictions = await cocoSsdModel.detect(imageTensor);
+
+	        // Dispose of the tensor to free up GPU memory
+	        imageTensor.dispose();
+
+	        // 5. Publish the results to the endpoint
+	        if (predictions.length > 0) {
+	            console.log('Detection results:', predictions);
+	            sendDetectionResults(predictions);
+	        }
+
+	        statusMessageElementDetection.textContent = `Objects detected: ${predictions.length}`;
+	    } catch (error) {
+	        console.error('Detection failed:', error);
+	        statusMessageElement.textContent = 'Object Detection: Error! ❌' + error;
+	    }
+	}
+        
+        // Function to publish detection results to the server
+        async function sendDetectionResults(detections) {
+            try {
+                const response = await fetch(DETECTION_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(detections),
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                console.log('Detection results published successfully.');
+            } catch (error) {
+                console.error('Failed to publish detection results:', error);
+            }
+        }
 
         // --- ANIMATION LOOP ---
         function animate() {
@@ -540,6 +686,9 @@
             // Update robot's visual position and orientation
             robotGroup.position.set(robotActualState.x, robotActualState.y, 0);
             robotGroup.rotation.z = robotActualState.theta; // Theta is rotation around Z
+            
+            // Perform object detection asynchronously
+            detectObjects();
 
             renderer.render(scene, activeCamera);
         }
