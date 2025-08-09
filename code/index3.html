@@ -172,11 +172,13 @@
         let robotGroup; // Group containing all robot meshes
         let environmentSceneGroup; // Group for all environment meshes
         let renderTarget; // The render target for the onboard camera view
+        let robotTargetGroup; // Group containing all the target meshes
 
         // --- ROBOT STATE & CONTROL ---
         let joystickLinear = 0; // Linear velocity (forward/backward)
         let joystickAngular = 0; // Angular velocity (left/right)
         let robotActualState = { x: 0, y: 0, theta: 0 }; // Actual robot pose from server
+        let robotTargetState = { x: 0, y: 0, theta: 0 }; // Actual robot pose from server
         let statusMessageElement; // DOM element for status updates
 
         // --- DETECTION ---
@@ -277,6 +279,8 @@
             // Robot Model Creation
             createRobotModel();
 
+            createRobotTargetModel();
+
             // UI Elements
 	    statusMessageElement = document.getElementById('status-message');
             statusMessageElementDetection = document.getElementById('detection-status-message');
@@ -370,6 +374,54 @@
             robotBody.add(onboardCamera);
         }
 
+
+        // --- TARGET MODEL CREATION ---
+        function createRobotTargetModel() {
+            robotTargetGroup = new THREE.Group();
+            scene.add(robotTargetGroup);
+
+            // Create a loading manager
+            const loadingManager = new THREE.LoadingManager();
+
+            // Create a texture loader, passing the loading manager to it
+            const textureLoader = new THREE.TextureLoader(loadingManager);
+
+            // Load all the textures. The manager will track their loading status.
+            const frontTexture = textureLoader.load('/front_gemini_generated_image_3eom1b3eom1b3eom.png');
+            const backTexture = textureLoader.load('/back_gemini_generated_image_n66of3n66of3n66o.png');
+            const leftTexture = textureLoader.load('/left.jpg');
+            const rightTexture = textureLoader.load('/right.jpg');
+            frontTexture.center.set(0.5, 0.5);
+            frontTexture.rotation=Math.PI/2;
+            backTexture.center.set(0.5, 0.5);
+            backTexture.rotation=-Math.PI/2;
+            leftTexture.center.set(0.5, 0.5);
+            leftTexture.rotation=Math.PI;
+
+            // This callback function will be executed ONLY when all textures are fully loaded
+            loadingManager.onLoad = function() {
+                console.log('All textures have finished loading!');
+
+                const materials = [
+                    new THREE.MeshBasicMaterial({ map: frontTexture, flatShading: true }),
+                    new THREE.MeshBasicMaterial({ map: backTexture, flatShading: true }),
+                    new THREE.MeshPhongMaterial({ map: leftTexture, flatShading: true }),
+                    new THREE.MeshPhongMaterial({ map: rightTexture, flatShading: true }),
+                    new THREE.MeshPhongMaterial({ color: 0x0077ff, flatShading: true }),
+                    new THREE.MeshPhongMaterial({ color: 0x117711, flatShading: true }),
+                ];
+
+                const geometry = new THREE.BoxGeometry(0.2, 0.6, 1);
+                geometry.translate(0, 0, geometry.parameters.height/2);
+                const robotTargetBody = new THREE.Mesh(geometry, materials);
+                robotTargetGroup.add(robotTargetBody);
+            };
+
+            // If there's an error loading any texture, this callback will fire
+            loadingManager.onError = function(url) {
+                console.error('There was an error loading ' + url);
+            };
+        }
         // --- ENVIRONMENT LOADING ---
         function loadEnvironment(envConfig) {
             // Dispose of previous environment's geometries and materials
@@ -456,6 +508,11 @@
             // Immediately update robot's visual position
             robotGroup.position.set(robotActualState.x, robotActualState.y, 0);
             robotGroup.rotation.z = robotActualState.theta;
+
+            // Set the start target
+            robotTargetGroup.position.set(0, 1, 0);
+            robotTargetGroup.rotation.z = 0;
+
         }
 
         // Helper to dispose Three.js objects
@@ -506,12 +563,31 @@
                 // Ensure data is parsed correctly, trim whitespace
                 const data = dataText.trim().split(" ").map(parseFloat);
 
-                if (data.length >= 3 && !isNaN(data[0]) && !isNaN(data[1]) && !isNaN(data[2])) {
+                // Add a cache-busting timestamp
+                const url2 = `${BASE_URL}/target?t=${new Date().getTime()}`;
+                const response2 = await fetch(url2);
+
+                if (!response2.ok) {
+                    throw new Error(`HTTP error! status: ${response2.status}`);
+                }
+
+                const targetText = await response2.text();
+                // Ensure data is parsed correctly, trim whitespace
+                const target = targetText.trim().split(" ").map(parseFloat);
+
+
+                if (data.length >= 3 && !isNaN(data[0]) && !isNaN(data[1]) && !isNaN(data[2]) && target.length >= 3 && !isNaN(target[0]) && !isNaN(target[1]) && !isNaN(target[2])) {
                     robotActualState.x = data[0];
                     robotActualState.y = data[1];
                     robotActualState.theta = data[2];
+
+                    robotTargetState.x = target[0];
+                    robotTargetState.y = target[1];
+                    robotTargetState.theta = target[2];
+
                     statusMessageElement.textContent = "Robot state: Connected ✅";
                     statusMessageElement.style.color = "green";
+
                 } else {
                     console.warn("Received malformed data:", dataText);
                     statusMessageElement.textContent = "Robot state: Malformed data ⚠️";
@@ -686,7 +762,10 @@
             // Update robot's visual position and orientation
             robotGroup.position.set(robotActualState.x, robotActualState.y, 0);
             robotGroup.rotation.z = robotActualState.theta; // Theta is rotation around Z
-            
+
+            robotTargetGroup.position.set(robotTargetState.x, robotTargetState.y, 0);
+            robotTargetGroup.rotation.z = robotTargetState.theta; // Theta is rotation around Z
+
             // Perform object detection asynchronously
             detectObjects();
 
