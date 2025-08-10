@@ -1,3 +1,4 @@
+from datetime import datetime
 from plant import *
 from flask import Flask, Blueprint, render_template, request, jsonify
 from swagger_ui_bundle import swagger_ui_path
@@ -231,7 +232,7 @@ def receive_object_data(idx):
             return jsonify({"error": "Invalid JSON"}), 400
 
         # Store the data using the subsystem index (idx) as the key.
-        object_detection_data[idx] = data
+        object_detection_data[idx] = {"time": datetime.now().timestamp(), "objects": data}
 
         return jsonify({"message": f"Data for subsystem {idx} received successfully"}), 200
 
@@ -325,7 +326,7 @@ def model(idx=0):
     """
 
     f = interpret(request.full_path, idx)
-    return f
+    return f[1:-1]
 
 
 application.register_blueprint(api)

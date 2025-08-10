@@ -639,35 +639,44 @@
         }
 
         // --- KEYBOARD CONTROL ---
-        function checkKeyboard() {
-            let currentLinear = 0;
-            let currentAngular = 0;
+	function checkKeyboard() {
+	    let currentLinear = 0;
+	    let currentAngular = 0;
+	    let keyWasPressed = false; // Initialize the flag
+	
+	    // Prioritize joystick if it's active
+	    if (joystickLinear !== 0 || joystickAngular !== 0) {
+	        return; // Joystick is controlling, ignore keyboard
+	    }
 
-            // Prioritize joystick if it's active
-            if (joystickLinear !== 0 || joystickAngular !== 0) {
-                return; // Joystick is controlling, ignore keyboard
-            }
+	    if (keyPressed["ArrowUp"]) {
+	        currentLinear = ROBOT_MAX_KEYBOARD_VELOCITY;
+	        keyWasPressed = true;
+	    } else if (keyPressed["ArrowDown"]) {
+	        currentLinear = -ROBOT_MAX_KEYBOARD_VELOCITY;
+	        keyWasPressed = true;
+	    }
 
-            if (keyPressed["ArrowUp"]) {
-                currentLinear = ROBOT_MAX_KEYBOARD_VELOCITY;
-            } else if (keyPressed["ArrowDown"]) {
-                currentLinear = -ROBOT_MAX_KEYBOARD_VELOCITY;
-            }
+	    if (keyPressed["ArrowLeft"]) {
+	        currentAngular = ROBOT_MAX_KEYBOARD_VELOCITY;
+	        keyWasPressed = true;
+	    } else if (keyPressed["ArrowRight"]) {
+	        currentAngular = -ROBOT_MAX_KEYBOARD_VELOCITY;
+	        keyWasPressed = true;
+	    }
 
-            if (keyPressed["ArrowLeft"]) {
-                currentAngular = ROBOT_MAX_KEYBOARD_VELOCITY;
-            } else if (keyPressed["ArrowRight"]) {
-                currentAngular = -ROBOT_MAX_KEYBOARD_VELOCITY;
-            }
+	    // If spacebar is pressed, stop
+	    if (keyPressed["Space"]) {
+	        currentLinear = 0;
+	        currentAngular = 0;
+	        keyWasPressed = true;
+	    }
 
-            // If spacebar is pressed, stop
-            if (keyPressed["Space"]) {
-                currentLinear = 0;
-                currentAngular = 0;
-            }
-
-            applyDifferentialDriveControl(currentLinear, currentAngular);
-        }
+	    // Apply changes only if a key was actually pressed
+	    if (keyWasPressed) {
+	        applyDifferentialDriveControl(currentLinear, currentAngular);
+	    }
+	}
 
         // --- DIFFERENTIAL DRIVE LOGIC ---
         function applyDifferentialDriveControl(linearVelocity, angularVelocity) {
