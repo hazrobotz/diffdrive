@@ -1,0 +1,43 @@
+{
+  "content": [
+    {
+      "content": null,
+      "created": "2025-08-10T11:10:00.613852Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2025-08-10T11:07:14.213852Z",
+      "mimetype": "text/x-python",
+      "name": "hazrobotz.py",
+      "path": "hazrobotz.py",
+      "size": 1173,
+      "type": "file",
+      "writable": true
+    },
+    {
+      "content": null,
+      "created": "2025-08-10T13:47:22.429849Z",
+      "format": null,
+      "hash": null,
+      "hash_algorithm": null,
+      "last_modified": "2025-08-10T13:46:04.969849Z",
+      "mimetype": null,
+      "name": "demo.ipynb",
+      "path": "demo.ipynb",
+      "size": 1474,
+      "type": "notebook",
+      "writable": true
+    }
+  ],
+  "created": "2025-08-10T13:47:22.425849Z",
+  "format": "json",
+  "hash": null,
+  "hash_algorithm": null,
+  "last_modified": "2025-08-10T13:47:22.425849Z",
+  "mimetype": null,
+  "name": "",
+  "path": "",
+  "size": null,
+  "type": "directory",
+  "writable": true
+}
